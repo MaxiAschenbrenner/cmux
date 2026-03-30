@@ -24799,6 +24799,29 @@
         }
       }
     },
+    "commandPalette.kind.vscode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VS Code"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VS Code"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VS Code"
+          }
+        }
+      }
+    },
     "commandPalette.kind.workspace": {
       "extractionState": "manual",
       "localizations": {

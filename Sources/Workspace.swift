@@ -5583,6 +5583,7 @@ final class Workspace: Identifiable, ObservableObject {
         BonsplitConfiguration.SplitButtonTooltips(
             newTerminal: KeyboardShortcutSettings.Action.newSurface.tooltip("New Terminal"),
             newBrowser: KeyboardShortcutSettings.Action.openBrowser.tooltip("New Browser"),
+            newVSCode: KeyboardShortcutSettings.Action.toggleVSCode.tooltip("New VS Code"),
             splitRight: KeyboardShortcutSettings.Action.splitRight.tooltip("Split Right"),
             splitDown: KeyboardShortcutSettings.Action.splitDown.tooltip("Split Down")
         )
@@ -5895,6 +5896,11 @@ final class Workspace: Identifiable, ObservableObject {
     // shared SSH control master that is still serving the moved terminal.
     private var skipControlMasterCleanupAfterDetachedRemoteTransfer = false
     private var transferredRemoteCleanupConfigurationsByPanelId: [UUID: WorkspaceRemoteConfiguration] = [:]
+
+    /// Set of browser panel IDs that were created as VS Code panels.
+    private var vscodeBrowserPanelIds: Set<UUID> = []
+    /// Panel focused before VS Code toggle.
+    private var preVSCodeToggleFocusedPanelId: UUID?
 
 #if DEBUG
     private func debugElapsedMs(since start: TimeInterval) -> String {
@@ -7590,7 +7596,8 @@ final class Workspace: Identifiable, ObservableObject {
         insertFirst: Bool = false,
         url: URL? = nil,
         preferredProfileID: UUID? = nil,
-        focus: Bool = true
+        focus: Bool = true,
+        hideChrome: Bool = false
     ) -> BrowserPanel? {
         // Find the pane containing the source panel
         guard let sourceTabId = surfaceIdFromPanelId(panelId) else { return nil }
@@ -7615,7 +7622,8 @@ final class Workspace: Identifiable, ObservableObject {
             initialURL: url,
             proxyEndpoint: remoteProxyEndpoint,
             isRemoteWorkspace: isRemoteWorkspace,
-            remoteWebsiteDataStoreIdentifier: isRemoteWorkspace ? id : nil
+            remoteWebsiteDataStoreIdentifier: isRemoteWorkspace ? id : nil,
+            hideChrome: hideChrome
         )
         panels[browserPanel.id] = browserPanel
         panelTitles[browserPanel.id] = browserPanel.displayTitle
@@ -7677,7 +7685,8 @@ final class Workspace: Identifiable, ObservableObject {
         focus: Bool? = nil,
         insertAtEnd: Bool = false,
         preferredProfileID: UUID? = nil,
-        bypassInsecureHTTPHostOnce: String? = nil
+        bypassInsecureHTTPHostOnce: String? = nil,
+        hideChrome: Bool = false
     ) -> BrowserPanel? {
         let shouldFocusNewTab = focus ?? (bonsplitController.focusedPaneId == paneId)
         let sourcePanelId = effectiveSelectedPanelId(inPane: paneId)
@@ -7694,7 +7703,8 @@ final class Workspace: Identifiable, ObservableObject {
             bypassInsecureHTTPHostOnce: bypassInsecureHTTPHostOnce,
             proxyEndpoint: remoteProxyEndpoint,
             isRemoteWorkspace: isRemoteWorkspace,
-            remoteWebsiteDataStoreIdentifier: isRemoteWorkspace ? id : nil
+            remoteWebsiteDataStoreIdentifier: isRemoteWorkspace ? id : nil,
+            hideChrome: hideChrome
         )
         panels[browserPanel.id] = browserPanel
         panelTitles[browserPanel.id] = browserPanel.displayTitle
@@ -7847,6 +7857,80 @@ final class Workspace: Identifiable, ObservableObject {
 
         installMarkdownPanelSubscription(markdownPanel)
         return markdownPanel
+    }
+
+    // MARK: - VS Code Toggle (Hybrid C)
+
+    /// Toggle VS Code panel visibility with split zoom.
+    /// Uses the existing VSCodeServeWebController and creates browser panels.
+    @discardableResult
+    func toggleVSCode() -> Bool {
+        // Case 1: A VS Code browser panel is visible -> toggle out (close).
+        if let vsCodePanelId = findVisibleVSCodeBrowserPanelId() {
+            if bonsplitController.isSplitZoomed {
+                _ = toggleSplitZoom(panelId: vsCodePanelId)
+            }
+            let previousId = preVSCodeToggleFocusedPanelId
+            preVSCodeToggleFocusedPanelId = nil
+            vscodeBrowserPanelIds.remove(vsCodePanelId)
+            _ = closePanel(vsCodePanelId, force: true)
+            if let previousId, panels[previousId] != nil {
+                focusPanel(previousId)
+            }
+            return true
+        }
+
+        // Case 3: No VS Code -> create browser panel via VSCodeServeWebController.
+        return createVSCodeBrowserPanel()
+    }
+
+    private func findVisibleVSCodeBrowserPanelId() -> UUID? {
+        for (id, _) in panels {
+            if vscodeBrowserPanelIds.contains(id) { return id }
+        }
+        return nil
+    }
+
+    private func createVSCodeBrowserPanel() -> Bool {
+        guard TerminalDirectoryOpenTarget.vscodeInline.isAvailable() else {
+            showVSCodeUnavailableAlert()
+            return false
+        }
+        guard let vscodeAppURL = TerminalDirectoryOpenTarget.vscodeInline.applicationURL() else {
+            showVSCodeUnavailableAlert()
+            return false
+        }
+
+        preVSCodeToggleFocusedPanelId = focusedPanelId
+
+        VSCodeServeWebController.shared.ensureServeWebURL(vscodeApplicationURL: vscodeAppURL) { [weak self] serveWebURL in
+            guard let self, let serveWebURL else { return }
+            guard let openURL = VSCodeServeWebURLBuilder.openFolderURL(
+                baseWebUIURL: serveWebURL,
+                directoryPath: self.currentDirectory
+            ) else { return }
+
+            guard let focusedPane = self.bonsplitController.focusedPaneId else { return }
+            guard let browserPanel = self.newBrowserSurface(
+                inPane: focusedPane,
+                url: openURL,
+                focus: true,
+                hideChrome: true
+            ) else { return }
+
+            self.vscodeBrowserPanelIds.insert(browserPanel.id)
+            _ = self.toggleSplitZoom(panelId: browserPanel.id)
+        }
+        return true
+    }
+
+    private func showVSCodeUnavailableAlert() {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "vscode.alert.notInstalled.title", defaultValue: "VS Code Not Found")
+        alert.informativeText = String(localized: "vscode.alert.notInstalled.message", defaultValue: "Install Visual Studio Code and ensure the 'code' command is available in your PATH.\n\n1. Download VS Code from https://code.visualstudio.com\n2. Open VS Code\n3. Press Cmd+Shift+P → \"Shell Command: Install 'code' command in PATH\"")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: String(localized: "vscode.alert.ok", defaultValue: "OK"))
+        alert.runModal()
     }
 
     /// Tear down all panels in this workspace, freeing their Ghostty surfaces.
@@ -10686,11 +10770,28 @@ extension Workspace: BonsplitDelegate {
     }
 
     func splitTabBar(_ controller: BonsplitController, didRequestNewTab kind: String, inPane pane: PaneID) {
+        #if DEBUG
+        dlog("didRequestNewTab kind=\(kind) pane=\(pane)")
+        #endif
         switch kind {
         case "terminal":
             _ = newTerminalSurface(inPane: pane)
         case "browser":
             _ = newBrowserSurface(inPane: pane)
+        case "vscode":
+            guard TerminalDirectoryOpenTarget.vscodeInline.isAvailable(),
+                  let vscodeAppURL = TerminalDirectoryOpenTarget.vscodeInline.applicationURL() else {
+                showVSCodeUnavailableAlert()
+                return
+            }
+            VSCodeServeWebController.shared.ensureServeWebURL(vscodeApplicationURL: vscodeAppURL) { [weak self] serveWebURL in
+                guard let self, let serveWebURL else { return }
+                guard let openURL = VSCodeServeWebURLBuilder.openFolderURL(
+                    baseWebUIURL: serveWebURL,
+                    directoryPath: self.currentDirectory
+                ) else { return }
+                _ = self.newBrowserSurface(inPane: pane, url: openURL, hideChrome: true)
+            }
         default:
             _ = newTerminalSurface(inPane: pane)
         }

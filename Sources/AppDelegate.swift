@@ -985,7 +985,16 @@ final class VSCodeServeWebController {
                 }
                 if self.serveWebProcess === terminatedProcess {
                     self.serveWebProcess = nil
+                    let hadURL = self.serveWebURL != nil
                     self.serveWebURL = nil
+                    // Auto-restart if the server was previously running (had a URL)
+                    // and wasn't intentionally stopped.
+                    if hadURL {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            guard let vscodeAppURL = TerminalDirectoryOpenTarget.vscodeInline.applicationURL() else { return }
+                            VSCodeServeWebController.shared.ensureServeWebURL(vscodeApplicationURL: vscodeAppURL) { _ in }
+                        }
+                    }
                 }
                 if let tokenFileURL = self.connectionTokenFilesByProcessID.removeValue(
                     forKey: ObjectIdentifier(terminatedProcess)
@@ -2408,6 +2417,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         installBrowserAddressBarFocusObservers()
         installShortcutMonitor()
         installShortcutDefaultsObserver()
+
         NSApp.servicesProvider = self
 #if DEBUG
         UpdateTestSupport.applyIfNeeded(to: updateController.viewModel)
@@ -9831,6 +9841,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             dlog("shortcut.action name=splitBrowserDown \(debugShortcutRouteSnapshot(event: event))")
 #endif
             _ = performBrowserSplitShortcut(direction: .down)
+            return true
+        }
+
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .toggleVSCode)) {
+            _ = tabManager?.toggleVSCode()
+            return true
+        }
+
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .splitVSCodeRight)) {
+            _ = tabManager?.splitVSCode(orientation: .horizontal)
+            return true
+        }
+
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .splitVSCodeDown)) {
+            _ = tabManager?.splitVSCode(orientation: .vertical)
             return true
         }
 

@@ -3824,6 +3824,39 @@ class TabManager: ObservableObject {
         return tab.toggleSplitZoom(panelId: focusedPanelId)
     }
 
+    /// Toggle VS Code panel in the selected workspace.
+    @discardableResult
+    func toggleVSCode() -> Bool {
+        guard let tab = selectedWorkspace else { return false }
+        return tab.toggleVSCode()
+    }
+
+    /// Create a VS Code split from the focused panel in the selected workspace.
+    @discardableResult
+    func splitVSCode(orientation: SplitOrientation) -> Bool {
+        guard let tab = selectedWorkspace,
+              let focusedPanelId = tab.focusedPanelId else { return false }
+        guard TerminalDirectoryOpenTarget.vscodeInline.isAvailable(),
+              let vscodeAppURL = TerminalDirectoryOpenTarget.vscodeInline.applicationURL() else {
+            return false
+        }
+        VSCodeServeWebController.shared.ensureServeWebURL(vscodeApplicationURL: vscodeAppURL) { [weak tab] serveWebURL in
+            guard let tab, let serveWebURL else { return }
+            guard let openURL = VSCodeServeWebURLBuilder.openFolderURL(
+                baseWebUIURL: serveWebURL,
+                directoryPath: tab.currentDirectory
+            ) else { return }
+            _ = tab.newBrowserSplit(
+                from: focusedPanelId,
+                orientation: orientation,
+                url: openURL,
+                focus: true,
+                hideChrome: true
+            )
+        }
+        return true
+    }
+
     private func equalizeSplits(
         in node: ExternalTreeNode,
         controller: BonsplitController,

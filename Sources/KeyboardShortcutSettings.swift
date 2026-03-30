@@ -47,6 +47,11 @@ enum KeyboardShortcutSettings {
         case toggleBrowserDeveloperTools
         case showBrowserJavaScriptConsole
 
+        // VS Code
+        case toggleVSCode
+        case splitVSCodeRight
+        case splitVSCodeDown
+
         var id: String { rawValue }
 
         var label: String {
@@ -83,6 +88,9 @@ enum KeyboardShortcutSettings {
             case .openBrowser: return String(localized: "shortcut.openBrowser.label", defaultValue: "Open Browser")
             case .toggleBrowserDeveloperTools: return String(localized: "shortcut.toggleBrowserDevTools.label", defaultValue: "Toggle Browser Developer Tools")
             case .showBrowserJavaScriptConsole: return String(localized: "shortcut.showBrowserJSConsole.label", defaultValue: "Show Browser JavaScript Console")
+            case .toggleVSCode: return String(localized: "shortcut.toggleVSCode.label", defaultValue: "Toggle VS Code")
+            case .splitVSCodeRight: return String(localized: "shortcut.splitVSCodeRight.label", defaultValue: "Split VS Code Right")
+            case .splitVSCodeDown: return String(localized: "shortcut.splitVSCodeDown.label", defaultValue: "Split VS Code Down")
             }
         }
 
@@ -120,6 +128,9 @@ enum KeyboardShortcutSettings {
             case .openBrowser: return "shortcut.openBrowser"
             case .toggleBrowserDeveloperTools: return "shortcut.toggleBrowserDeveloperTools"
             case .showBrowserJavaScriptConsole: return "shortcut.showBrowserJavaScriptConsole"
+            case .toggleVSCode: return "shortcut.toggleVSCode"
+            case .splitVSCodeRight: return "shortcut.splitVSCodeRight"
+            case .splitVSCodeDown: return "shortcut.splitVSCodeDown"
             }
         }
 
@@ -191,6 +202,12 @@ enum KeyboardShortcutSettings {
             case .showBrowserJavaScriptConsole:
                 // Safari default: Show JavaScript Console.
                 return StoredShortcut(key: "c", command: true, shift: false, option: true, control: false)
+            case .toggleVSCode:
+                return StoredShortcut(key: "e", command: true, shift: false, option: false, control: false)
+            case .splitVSCodeRight:
+                return StoredShortcut(key: "e", command: true, shift: true, option: false, control: false)
+            case .splitVSCodeDown:
+                return StoredShortcut(key: "e", command: true, shift: true, option: true, control: false)
             }
         }
 

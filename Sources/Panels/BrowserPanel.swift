@@ -2569,6 +2569,10 @@ final class BrowserPanel: Panel, ObservableObject {
         return instanceID == webViewInstanceID
     }
 
+    /// When true, the browser chrome (address bar, navigation buttons) is hidden.
+    /// Used for VS Code inline panels where the embedded app provides its own UI.
+    let hideChrome: Bool
+
     init(
         workspaceId: UUID,
         profileID: UUID? = nil,
@@ -2576,8 +2580,10 @@ final class BrowserPanel: Panel, ObservableObject {
         bypassInsecureHTTPHostOnce: String? = nil,
         proxyEndpoint: BrowserProxyEndpoint? = nil,
         isRemoteWorkspace: Bool = false,
-        remoteWebsiteDataStoreIdentifier: UUID? = nil
+        remoteWebsiteDataStoreIdentifier: UUID? = nil,
+        hideChrome: Bool = false
     ) {
+        self.hideChrome = hideChrome
         self.id = UUID()
         self.workspaceId = workspaceId
         let requestedProfileID = profileID ?? BrowserProfileStore.shared.effectiveLastUsedProfileID

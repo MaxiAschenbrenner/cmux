@@ -5165,6 +5165,12 @@ struct ContentView: View {
             return .toggleSplitZoom
         case "palette.triggerFlash":
             return .triggerFlash
+        case "palette.toggleVSCode":
+            return .toggleVSCode
+        case "palette.splitVSCodeRight":
+            return .splitVSCodeRight
+        case "palette.splitVSCodeDown":
+            return .splitVSCodeDown
         default:
             return nil
         }
@@ -5986,6 +5992,32 @@ struct ContentView: View {
                 when: { $0.bool(CommandPaletteContextKeys.workspaceHasSplits) }
             )
         )
+        contributions.append(
+            CommandPaletteCommandContribution(
+                commandId: "palette.toggleVSCode",
+                title: constant(String(localized: "command.toggleVSCode.title", defaultValue: "Toggle VS Code")),
+                subtitle: constant(String(localized: "command.toggleVSCode.subtitle", defaultValue: "Editor")),
+                keywords: ["vscode", "editor", "code", "visual", "studio"]
+            )
+        )
+        contributions.append(
+            CommandPaletteCommandContribution(
+                commandId: "palette.splitVSCodeRight",
+                title: constant(String(localized: "command.splitVSCodeRight.title", defaultValue: "Split VS Code Right")),
+                subtitle: constant(String(localized: "command.splitVSCodeRight.subtitle", defaultValue: "Editor")),
+                keywords: ["vscode", "split", "right", "editor"],
+                when: { $0.bool(CommandPaletteContextKeys.hasWorkspace) }
+            )
+        )
+        contributions.append(
+            CommandPaletteCommandContribution(
+                commandId: "palette.splitVSCodeDown",
+                title: constant(String(localized: "command.splitVSCodeDown.title", defaultValue: "Split VS Code Down")),
+                subtitle: constant(String(localized: "command.splitVSCodeDown.subtitle", defaultValue: "Editor")),
+                keywords: ["vscode", "split", "down", "editor"],
+                when: { $0.bool(CommandPaletteContextKeys.hasWorkspace) }
+            )
+        )
 
         let cmuxConfigDefaultSubtitle = constant(String(localized: "command.cmuxConfig.subtitle", defaultValue: "cmux.json"))
         for command in cmuxConfigStore.loadedCommands {
@@ -6345,6 +6377,15 @@ struct ContentView: View {
                 NSSound.beep()
                 return
             }
+        }
+        registry.register(commandId: "palette.toggleVSCode") {
+            _ = tabManager.toggleVSCode()
+        }
+        registry.register(commandId: "palette.splitVSCodeRight") {
+            _ = tabManager.splitVSCode(orientation: .horizontal)
+        }
+        registry.register(commandId: "palette.splitVSCodeDown") {
+            _ = tabManager.splitVSCode(orientation: .vertical)
         }
 
         for command in cmuxConfigStore.loadedCommands {
