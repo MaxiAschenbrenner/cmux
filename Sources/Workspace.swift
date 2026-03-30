@@ -5844,6 +5844,11 @@ final class Workspace: Identifiable, ObservableObject {
     }
 
     deinit {
+        let panelToClose = hiddenVSCodePanel
+        hiddenVSCodePanel = nil
+        if let panelToClose {
+            Task { @MainActor in panelToClose.close() }
+        }
         activeRemoteSessionControllerID = nil
         remoteSessionController?.stop()
     }
@@ -5975,6 +5980,10 @@ final class Workspace: Identifiable, ObservableObject {
     private var vscodeBrowserPanelIds: Set<UUID> = []
     /// Panel focused before VS Code toggle.
     private var preVSCodeToggleFocusedPanelId: UUID?
+    /// VS Code panel hidden in the background to avoid reload on next toggle-in.
+    private var hiddenVSCodePanel: BrowserPanel?
+    /// The workspace directory the hidden VS Code panel was opened with.
+    private var hiddenVSCodePanelDirectory: String?
 
 #if DEBUG
     private func debugElapsedMs(since start: TimeInterval) -> String {
@@ -6424,6 +6433,11 @@ final class Workspace: Identifiable, ObservableObject {
         // Update current directory if this is the focused panel
         if panelId == focusedPanelId, currentDirectory != trimmed {
             currentDirectory = trimmed
+            // Discard hidden VS Code panel if the workspace directory changed,
+            // so the next toggle-in opens VS Code in the new directory.
+            if hiddenVSCodePanel != nil, hiddenVSCodePanelDirectory != trimmed {
+                discardHiddenVSCodePanel()
+            }
         }
     }
 
@@ -7949,7 +7963,7 @@ final class Workspace: Identifiable, ObservableObject {
     /// Uses the existing VSCodeServeWebController and creates browser panels.
     @discardableResult
     func toggleVSCode() -> Bool {
-        // Case 1: A VS Code browser panel is visible -> toggle out (close).
+        // Case 1: A VS Code browser panel is visible -> hide it (keep alive in background).
         if let vsCodePanelId = findVisibleVSCodeBrowserPanelId() {
             if bonsplitController.isSplitZoomed {
                 _ = toggleSplitZoom(panelId: vsCodePanelId)
@@ -7957,14 +7971,29 @@ final class Workspace: Identifiable, ObservableObject {
             let previousId = preVSCodeToggleFocusedPanelId
             preVSCodeToggleFocusedPanelId = nil
             vscodeBrowserPanelIds.remove(vsCodePanelId)
+
+            // Stash the panel before closePanel so didCloseTab skips close().
+            if let browserPanel = panels.removeValue(forKey: vsCodePanelId) as? BrowserPanel {
+                discardHiddenVSCodePanel()
+                hiddenVSCodePanel = browserPanel
+                hiddenVSCodePanelDirectory = currentDirectory
+                BrowserWindowPortalRegistry.hide(webView: browserPanel.webView, source: "vscode.toggleOut")
+            }
             _ = closePanel(vsCodePanelId, force: true)
+
             if let previousId, panels[previousId] != nil {
                 focusPanel(previousId)
             }
             return true
         }
 
+        // Case 2: Hidden VS Code panel exists for this directory -> restore it.
+        if let hiddenPanel = hiddenVSCodePanel, hiddenVSCodePanelDirectory == currentDirectory {
+            return restoreHiddenVSCodePanel(hiddenPanel)
+        }
+
         // Case 3: No VS Code -> create browser panel via VSCodeServeWebController.
+        discardHiddenVSCodePanel()
         return createVSCodeBrowserPanel()
     }
 
@@ -8006,6 +8035,48 @@ final class Workspace: Identifiable, ObservableObject {
             _ = self.toggleSplitZoom(panelId: browserPanel.id)
         }
         return true
+    }
+
+    private func restoreHiddenVSCodePanel(_ browserPanel: BrowserPanel) -> Bool {
+        hiddenVSCodePanel = nil
+        hiddenVSCodePanelDirectory = nil
+
+        preVSCodeToggleFocusedPanelId = focusedPanelId
+        guard let focusedPane = bonsplitController.focusedPaneId else { return false }
+
+        panels[browserPanel.id] = browserPanel
+
+        guard let newTabId = bonsplitController.createTab(
+            title: browserPanel.displayTitle,
+            icon: browserPanel.displayIcon,
+            kind: SurfaceKind.browser,
+            isDirty: browserPanel.isDirty,
+            isLoading: browserPanel.isLoading,
+            isPinned: false,
+            inPane: focusedPane
+        ) else {
+            panels.removeValue(forKey: browserPanel.id)
+            return false
+        }
+
+        surfaceIdToPanelId[newTabId] = browserPanel.id
+        bonsplitController.focusPane(focusedPane)
+        bonsplitController.selectTab(newTabId)
+        browserPanel.focus()
+        applyTabSelection(tabId: newTabId, inPane: focusedPane)
+        installBrowserPanelSubscription(browserPanel)
+
+        vscodeBrowserPanelIds.insert(browserPanel.id)
+        _ = toggleSplitZoom(panelId: browserPanel.id)
+        return true
+    }
+
+    /// Destroy the hidden VS Code panel and release its WKWebView.
+    private func discardHiddenVSCodePanel() {
+        guard let panel = hiddenVSCodePanel else { return }
+        hiddenVSCodePanel = nil
+        hiddenVSCodePanelDirectory = nil
+        panel.close()
     }
 
     private func showVSCodeUnavailableAlert() {
