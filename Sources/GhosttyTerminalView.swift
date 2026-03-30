@@ -1349,11 +1349,45 @@ class GhosttyApp {
         #endif
     }
 
+    private func loadInlineGhosttyConfig(
+        _ contents: String,
+        into config: ghostty_config_t,
+        prefix: String,
+        logLabel: String
+    ) {
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(prefix)-\(UUID().uuidString).conf")
+        do {
+            try trimmed.write(to: tmpURL, atomically: true, encoding: .utf8)
+            defer { try? FileManager.default.removeItem(at: tmpURL) }
+            tmpURL.path.withCString { path in
+                ghostty_config_load_file(config, path)
+            }
+        } catch {
+            #if DEBUG
+            dlog("ghostty.config.inlineLoad.failed label=\(logLabel) error=\(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func loadCopyOnSelectOverride(_ config: ghostty_config_t) {
+        loadInlineGhosttyConfig(
+            TerminalCopyOnSelectSettings.overrideConfigLine(),
+            into: config,
+            prefix: "cmux-copy-on-select",
+            logLabel: "copy-on-select override"
+        )
+    }
+
     private func loadDefaultConfigFilesWithLegacyFallback(_ config: ghostty_config_t) {
         ghostty_config_load_default_files(config)
         loadLegacyGhosttyConfigIfNeeded(config)
         ghostty_config_load_recursive_files(config)
         loadCmuxAppSupportGhosttyConfigIfNeeded(config)
+        loadCopyOnSelectOverride(config)
         loadCJKFontFallbackIfNeeded(config)
         ghostty_config_finalize(config)
     }
@@ -1376,20 +1410,12 @@ class GhosttyApp {
         let lines = mappings.map { range, font in
             "font-codepoint-map = \(range)=\(font)"
         }.joined(separator: "\n")
-
-        let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cmux-cjk-font-fallback-\(UUID().uuidString).conf")
-        do {
-            try lines.write(to: tmpURL, atomically: true, encoding: .utf8)
-            defer { try? FileManager.default.removeItem(at: tmpURL) }
-            tmpURL.path.withCString { path in
-                ghostty_config_load_file(config, path)
-            }
-        } catch {
-            #if DEBUG
-            Self.initLog("failed to write CJK font fallback config: \(error)")
-            #endif
-        }
+        loadInlineGhosttyConfig(
+            lines,
+            into: config,
+            prefix: "cmux-cjk-font-fallback",
+            logLabel: "CJK font fallback"
+        )
     }
 
     /// Unicode ranges shared by all CJK languages (Han ideographs, symbols, fullwidth forms).
@@ -2973,7 +2999,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         return val > 0 ? val : 10
     }()
     private let surfaceContext: ghostty_surface_context_e
-    private let configTemplate: ghostty_surface_config_s?
+    private let configTemplate: CmuxSurfaceConfigTemplate?
     private let workingDirectory: String?
     private let initialCommand: String?
     private let initialEnvironmentOverrides: [String: String]
@@ -3061,7 +3087,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
     init(
         tabId: UUID,
         context: ghostty_surface_context_e,
-        configTemplate: ghostty_surface_config_s?,
+        configTemplate: CmuxSurfaceConfigTemplate?,
         workingDirectory: String? = nil,
         initialCommand: String? = nil,
         initialEnvironmentOverrides: [String: String] = [:],
@@ -3585,7 +3611,10 @@ final class TerminalSurface: Identifiable, ObservableObject {
 
         let scaleFactors = scaleFactors(for: view)
 
-        var surfaceConfig = configTemplate ?? ghostty_surface_config_new()
+        let baseConfig = configTemplate ?? CmuxSurfaceConfigTemplate()
+        var surfaceConfig = ghostty_surface_config_new()
+        surfaceConfig.font_size = baseConfig.fontSize
+        surfaceConfig.wait_after_command = baseConfig.waitAfterCommand
         surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceConfig.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(
             nsview: Unmanaged.passUnretained(view).toOpaque()
@@ -3612,19 +3641,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
             }
         }
 
-        var env: [String: String] = [:]
-        if surfaceConfig.env_var_count > 0, let existingEnv = surfaceConfig.env_vars {
-            let count = Int(surfaceConfig.env_var_count)
-            if count > 0 {
-                for i in 0..<count {
-                    let item = existingEnv[i]
-                    if let key = String(cString: item.key, encoding: .utf8),
-                       let value = String(cString: item.value, encoding: .utf8) {
-                        env[key] = value
-                    }
-                }
-            }
-        }
+        var env = baseConfig.environmentVariables
 
         var protectedStartupEnvironmentKeys: Set<String> = []
         func setManagedEnvironmentValue(_ key: String, _ value: String) {
@@ -3762,26 +3779,36 @@ final class TerminalSurface: Identifiable, ObservableObject {
             }
         }
 
-        let createWithCommandAndWorkingDirectory = { [self] in
+        let resolvedWorkingDirectory: String? = {
+            if let workingDirectory, !workingDirectory.isEmpty {
+                return workingDirectory
+            }
+            return baseConfig.workingDirectory
+        }()
+        let resolvedCommand: String? = {
             if let initialCommand, !initialCommand.isEmpty {
-                initialCommand.withCString { cCommand in
-                    surfaceConfig.command = cCommand
-                    if let workingDirectory, !workingDirectory.isEmpty {
-                        workingDirectory.withCString { cWorkingDir in
-                            surfaceConfig.working_directory = cWorkingDir
-                            createSurface()
-                        }
-                    } else {
+                return initialCommand
+            }
+            return baseConfig.command
+        }()
+        let resolvedInitialInput = baseConfig.initialInput
+        func withOptionalCString<T>(_ value: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {
+            guard let value else {
+                return body(nil)
+            }
+            return value.withCString(body)
+        }
+
+        let createWithCommandAndWorkingDirectory = {
+            withOptionalCString(resolvedCommand) { cCommand in
+                surfaceConfig.command = cCommand
+                withOptionalCString(resolvedWorkingDirectory) { cWorkingDir in
+                    surfaceConfig.working_directory = cWorkingDir
+                    withOptionalCString(resolvedInitialInput) { cInitialInput in
+                        surfaceConfig.initial_input = cInitialInput
                         createSurface()
                     }
                 }
-            } else if let workingDirectory, !workingDirectory.isEmpty {
-                workingDirectory.withCString { cWorkingDir in
-                    surfaceConfig.working_directory = cWorkingDir
-                    createSurface()
-                }
-            } else {
-                createSurface()
             }
         }
 
@@ -3844,7 +3871,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         // config/scale reconciliation. If runtime points don't match the inherited
         // template points, re-apply via binding action so all creation paths
         // (new surface, split, new workspace) preserve zoom from the source terminal.
-        if let inheritedFontPoints = configTemplate?.font_size,
+        if let inheritedFontPoints = configTemplate?.fontSize,
            inheritedFontPoints > 0 {
             let currentFontPoints = cmuxCurrentSurfaceFontSizePoints(createdSurface)
             let shouldReapply = {
@@ -6418,19 +6445,31 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 
         let menu = NSMenu()
         if onTriggerFlash != nil {
-            let flashItem = menu.addItem(withTitle: "Trigger Flash", action: #selector(triggerFlash(_:)), keyEquivalent: "")
+            let flashItem = menu.addItem(
+                withTitle: String(localized: "terminalContextMenu.triggerFlash", defaultValue: "Trigger Flash"),
+                action: #selector(triggerFlash(_:)),
+                keyEquivalent: ""
+            )
             flashItem.target = self
             menu.addItem(.separator())
         }
         if ghostty_surface_has_selection(surface) {
-            let item = menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+            let item = menu.addItem(
+                withTitle: String(localized: "terminalContextMenu.copy", defaultValue: "Copy"),
+                action: #selector(copy(_:)),
+                keyEquivalent: ""
+            )
             item.target = self
         }
-        let pasteItem = menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+        let pasteItem = menu.addItem(
+            withTitle: String(localized: "terminalContextMenu.paste", defaultValue: "Paste"),
+            action: #selector(paste(_:)),
+            keyEquivalent: ""
+        )
         pasteItem.target = self
         menu.addItem(.separator())
         let splitHorizontallyItem = menu.addItem(
-            withTitle: "Split Horizontally",
+            withTitle: String(localized: "terminalContextMenu.splitHorizontally", defaultValue: "Split Horizontally"),
             action: #selector(splitHorizontally(_:)),
             keyEquivalent: "d"
         )
@@ -6442,7 +6481,7 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         )
 
         let splitVerticallyItem = menu.addItem(
-            withTitle: "Split Vertically",
+            withTitle: String(localized: "terminalContextMenu.splitVertically", defaultValue: "Split Vertically"),
             action: #selector(splitVertically(_:)),
             keyEquivalent: "d"
         )
@@ -6450,6 +6489,17 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         splitVerticallyItem.keyEquivalentModifierMask = [.command]
         splitVerticallyItem.image = NSImage(
             systemSymbolName: "rectangle.righthalf.inset.filled",
+            accessibilityDescription: nil
+        )
+        menu.addItem(.separator())
+        let resetTerminalItem = menu.addItem(
+            withTitle: String(localized: "terminalContextMenu.resetTerminal", defaultValue: "Reset Terminal"),
+            action: #selector(resetTerminal(_:)),
+            keyEquivalent: ""
+        )
+        resetTerminalItem.target = self
+        resetTerminalItem.image = NSImage(
+            systemSymbolName: "arrow.trianglehead.2.clockwise",
             accessibilityDescription: nil
         )
         return menu
@@ -6487,6 +6537,10 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
 
     @objc private func triggerFlash(_ sender: Any?) {
         onTriggerFlash?()
+    }
+
+    @objc private func resetTerminal(_ sender: Any?) {
+        _ = performBindingAction("reset")
     }
 
     override func mouseMoved(with event: NSEvent) {

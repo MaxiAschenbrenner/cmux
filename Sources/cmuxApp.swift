@@ -2868,6 +2868,7 @@ private struct AboutPanelView: View {
 }
 
 private struct SidebarDebugView: View {
+    @AppStorage("sidebarMatchTerminalBackground") private var matchTerminalBackground = false
     @AppStorage("sidebarPreset") private var sidebarPreset = SidebarPresetOption.nativeSidebar.rawValue
     @AppStorage("sidebarTintOpacity") private var sidebarTintOpacity = SidebarTintDefaults.opacity
     @AppStorage("sidebarTintHex") private var sidebarTintHex = SidebarTintDefaults.hex
@@ -2923,6 +2924,8 @@ private struct SidebarDebugView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Sidebar Appearance")
                     .font(.headline)
+
+                Toggle(String(localized: "settings.sidebarAppearance.matchTerminalBackground", defaultValue: "Match Terminal Background"), isOn: $matchTerminalBackground)
 
                 GroupBox("Presets") {
                     Picker("Preset", selection: $sidebarPreset) {
@@ -3789,6 +3792,22 @@ enum CommandPaletteRenameSelectionSettings {
     }
 }
 
+enum TerminalCopyOnSelectSettings {
+    static let enabledKey = "terminalCopyOnSelectEnabled"
+    static let defaultEnabled = false
+
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: enabledKey) == nil {
+            return defaultEnabled
+        }
+        return defaults.bool(forKey: enabledKey)
+    }
+
+    static func overrideConfigLine(defaults: UserDefaults = .standard) -> String {
+        isEnabled(defaults: defaults) ? "copy-on-select = clipboard" : "copy-on-select = false"
+    }
+}
+
 enum CommandPaletteSwitcherSearchSettings {
     static let searchAllSurfacesKey = "commandPalette.switcherSearchAllSurfaces"
     static let defaultSearchAllSurfaces = false
@@ -3873,6 +3892,8 @@ struct SettingsView: View {
     @AppStorage(QuitWarningSettings.warnBeforeQuitKey) private var warnBeforeQuitShortcut = QuitWarningSettings.defaultWarnBeforeQuit
     @AppStorage(CommandPaletteRenameSelectionSettings.selectAllOnFocusKey)
     private var commandPaletteRenameSelectAllOnFocus = CommandPaletteRenameSelectionSettings.defaultSelectAllOnFocus
+    @AppStorage(TerminalCopyOnSelectSettings.enabledKey)
+    private var terminalCopyOnSelectEnabled = TerminalCopyOnSelectSettings.defaultEnabled
     @AppStorage(CommandPaletteSwitcherSearchSettings.searchAllSurfacesKey)
     private var commandPaletteSearchAllSurfaces = CommandPaletteSwitcherSearchSettings.defaultSearchAllSurfaces
     @AppStorage(ShortcutHintDebugSettings.alwaysShowHintsKey)
@@ -3909,6 +3930,7 @@ struct SettingsView: View {
     @AppStorage("sidebarTintHexLight") private var sidebarTintHexLight: String?
     @AppStorage("sidebarTintHexDark") private var sidebarTintHexDark: String?
     @AppStorage("sidebarTintOpacity") private var sidebarTintOpacity = SidebarTintDefaults.opacity
+    @AppStorage("sidebarMatchTerminalBackground") private var sidebarMatchTerminalBackground = false
 
     @ObservedObject private var notificationStore = TerminalNotificationStore.shared
     @State private var shortcutResetToken = UUID()
@@ -3990,6 +4012,19 @@ struct SettingsView: View {
         return String(
             localized: "settings.app.paneFirstClickFocus.subtitleOff",
             defaultValue: "When cmux is inactive, the first click only activates the window. Click again to focus the pane."
+        )
+    }
+
+    private var terminalCopyOnSelectSubtitle: String {
+        if terminalCopyOnSelectEnabled {
+            return String(
+                localized: "settings.app.copyOnSelect.subtitleOn",
+                defaultValue: "Automatically copy selected terminal text to the system clipboard."
+            )
+        }
+        return String(
+            localized: "settings.app.copyOnSelect.subtitleOff",
+            defaultValue: "Selecting terminal text does not copy it to the system clipboard."
         )
     }
 
@@ -4509,6 +4544,20 @@ struct SettingsView: View {
                                 .controlSize(.small)
                                 .accessibilityLabel(
                                     String(localized: "settings.app.paneFirstClickFocus", defaultValue: "Focus Pane on First Click")
+                                )
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.copyOnSelect", defaultValue: "Copy on Select"),
+                            subtitle: terminalCopyOnSelectSubtitle
+                        ) {
+                            Toggle("", isOn: $terminalCopyOnSelectEnabled)
+                                .labelsHidden()
+                                .controlSize(.small)
+                                .accessibilityLabel(
+                                    String(localized: "settings.app.copyOnSelect", defaultValue: "Copy on Select")
                                 )
                         }
 
@@ -5037,6 +5086,18 @@ struct SettingsView: View {
 
                     SettingsSectionHeader(title: String(localized: "settings.section.sidebarAppearance", defaultValue: "Sidebar Appearance"))
                     SettingsCard {
+                        SettingsCardRow(
+                            String(localized: "settings.sidebarAppearance.matchTerminalBackground", defaultValue: "Match Terminal Background"),
+                            subtitle: String(localized: "settings.sidebarAppearance.matchTerminalBackground.subtitle", defaultValue: "Use the same background color and transparency as the terminal.")
+                        ) {
+                            Toggle("", isOn: $sidebarMatchTerminalBackground)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
                         SettingsCardRow(
                             String(localized: "settings.sidebarAppearance.tintColorLight", defaultValue: "Light Mode Tint"),
                             subtitle: String(localized: "settings.sidebarAppearance.tintColorLight.subtitle", defaultValue: "Sidebar tint color when using light appearance.")
@@ -5645,6 +5706,9 @@ struct SettingsView: View {
         .onChange(of: notificationSoundCustomFilePath) { _, _ in
             refreshNotificationCustomSoundStatus()
         }
+        .onChange(of: terminalCopyOnSelectEnabled) { _, _ in
+            GhosttyApp.shared.reloadConfiguration(source: "settings.copy_on_select")
+        }
         .onChange(of: browserInsecureHTTPAllowlist) { oldValue, newValue in
             // Keep draft in sync with external changes unless the user has local unsaved edits.
             if browserInsecureHTTPAllowlistDraft == oldValue {
@@ -5768,6 +5832,7 @@ struct SettingsView: View {
         showMenuBarExtra = MenuBarExtraSettings.defaultShowInMenuBar
         warnBeforeQuitShortcut = QuitWarningSettings.defaultWarnBeforeQuit
         commandPaletteRenameSelectAllOnFocus = CommandPaletteRenameSelectionSettings.defaultSelectAllOnFocus
+        terminalCopyOnSelectEnabled = TerminalCopyOnSelectSettings.defaultEnabled
         commandPaletteSearchAllSurfaces = CommandPaletteSwitcherSearchSettings.defaultSearchAllSurfaces
         ShortcutHintDebugSettings.resetVisibilityDefaults()
         alwaysShowShortcutHints = ShortcutHintDebugSettings.defaultAlwaysShowHints
@@ -5801,6 +5866,7 @@ struct SettingsView: View {
         sidebarTintHexLight = nil
         sidebarTintHexDark = nil
         sidebarTintOpacity = SidebarTintDefaults.opacity
+        sidebarMatchTerminalBackground = false
         showOpenAccessConfirmation = false
         pendingOpenAccessMode = nil
         socketPasswordDraft = ""

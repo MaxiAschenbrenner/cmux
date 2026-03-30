@@ -2051,12 +2051,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let visibleFrame: CGRect
     }
 
-    private struct PersistedWindowGeometry: Codable, Sendable {
+    struct PersistedWindowGeometry: Codable, Sendable {
+        let version: Int
         let frame: SessionRectSnapshot
         let display: SessionDisplaySnapshot?
     }
 
-    private static let persistedWindowGeometryDefaultsKey = "cmux.session.lastWindowGeometry.v1"
+    nonisolated static let persistedWindowGeometrySchemaVersion = 2
+    private nonisolated static let persistedWindowGeometryDefaultsKey = "cmux.session.lastWindowGeometry.v2"
+    private nonisolated static let legacyPersistedWindowGeometryDefaultsKeys = [
+        "cmux.session.lastWindowGeometry.v1"
+    ]
 
     weak var tabManager: TabManager?
     weak var notificationStore: TerminalNotificationStore?
@@ -2152,6 +2157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let isFirstResponder: Bool
     }
     var debugCloseMainWindowConfirmationHandler: ((NSWindow) -> Bool)?
+    var debugCreateMainWindowSourceIsNativeFullScreenOverride: Bool?
     // Keep debug-only windows alive when tests intentionally inject key mismatches.
     private var debugDetachedContextWindows: [NSWindow] = []
 
@@ -2723,6 +2729,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         screenChangeSnapshotWorkItem?.cancel()
         _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
 
+        // Tagged DEV builds are ephemeral, skip quit confirmation entirely.
+        if SocketControlSettings.isTaggedDevBuild() {
+            return .terminateNow
+        }
+
         // If the user already confirmed via the Cmd+Q shortcut warning dialog
         // (handleQuitShortcutWarning), skip the check to avoid a second alert.
         if isQuitWarningConfirmed {
@@ -2887,16 +2898,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard !didPrepareStartupSessionSnapshot else { return }
         didPrepareStartupSessionSnapshot = true
         guard SessionRestorePolicy.shouldAttemptRestore() else { return }
+        Self.removeLegacyPersistedWindowGeometry()
         startupSessionSnapshot = SessionPersistenceStore.load()
     }
 
     private func persistedWindowGeometry(
         defaults: UserDefaults = .standard
     ) -> PersistedWindowGeometry? {
+        Self.removeLegacyPersistedWindowGeometry(defaults: defaults)
         guard let data = defaults.data(forKey: Self.persistedWindowGeometryDefaultsKey) else {
             return nil
         }
-        return try? JSONDecoder().decode(PersistedWindowGeometry.self, from: data)
+        guard let payload = Self.decodedPersistedWindowGeometryData(data) else {
+            defaults.removeObject(forKey: Self.persistedWindowGeometryDefaultsKey)
+            return nil
+        }
+        return payload
     }
 
     private func persistWindowGeometry(
@@ -2904,6 +2921,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         display: SessionDisplaySnapshot?,
         defaults: UserDefaults = .standard
     ) {
+        Self.removeLegacyPersistedWindowGeometry(defaults: defaults)
         guard let data = Self.encodedPersistedWindowGeometryData(frame: frame, display: display) else {
             return
         }
@@ -2915,8 +2933,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         display: SessionDisplaySnapshot?
     ) -> Data? {
         guard let frame else { return nil }
-        let payload = PersistedWindowGeometry(frame: frame, display: display)
+        let payload = PersistedWindowGeometry(
+            version: persistedWindowGeometrySchemaVersion,
+            frame: frame,
+            display: display
+        )
         return try? JSONEncoder().encode(payload)
+    }
+
+    nonisolated static func decodedPersistedWindowGeometryData(_ data: Data) -> PersistedWindowGeometry? {
+        guard let payload = try? JSONDecoder().decode(PersistedWindowGeometry.self, from: data),
+              payload.version == persistedWindowGeometrySchemaVersion else {
+            return nil
+        }
+        return payload
+    }
+
+    private nonisolated static func removeLegacyPersistedWindowGeometry(
+        defaults: UserDefaults = .standard
+    ) {
+        legacyPersistedWindowGeometryDefaultsKeys.forEach { defaults.removeObject(forKey: $0) }
     }
 
     private func persistWindowGeometry(from window: NSWindow?) {
@@ -3804,6 +3840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard snapshot != nil || removeWhenEmpty || persistedGeometryData != nil else { return }
 
         let writeBlock = {
+            Self.removeLegacyPersistedWindowGeometry()
             if let persistedGeometryData {
                 UserDefaults.standard.set(
                     persistedGeometryData,
@@ -5985,9 +6022,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Use the current key window's size for new windows so Cmd+Shift+N
         // creates a window matching the previous one's dimensions.
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        let existingFrame = preferredMainWindowContextForWorkspaceCreation(
+        let sourceContext = preferredMainWindowContextForWorkspaceCreation(
             debugSource: "createMainWindow.initialGeometry"
-        ).flatMap { resolvedWindow(for: $0)?.frame }
+        )
+        let sourceWindow = sourceContext.flatMap { resolvedWindow(for: $0) }
+        let existingFrame = sourceWindow?.frame
+        let sourceWindowIsNativeFullScreen: Bool = {
+#if DEBUG
+            if let debugCreateMainWindowSourceIsNativeFullScreenOverride {
+                return debugCreateMainWindowSourceIsNativeFullScreenOverride
+            }
+#endif
+            return sourceWindow?.styleMask.contains(.fullScreen) == true
+        }()
+        let shouldTemporarilyDisallowFullScreenTiling =
+            sessionWindowSnapshot == nil && sourceWindowIsNativeFullScreen
         let initialRect: NSRect
         if sessionWindowSnapshot == nil, let existingFrame {
             // Convert frame rect to content rect so the new window matches the
@@ -6003,6 +6052,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             backing: .buffered,
             defer: false
         )
+        // When creating a new window from an existing native fullscreen window,
+        // temporarily opt out of fullscreen tiling so AppKit doesn't place the
+        // new window into the active fullscreen Space.
+        if shouldTemporarilyDisallowFullScreenTiling {
+            window.collectionBehavior.insert(.fullScreenDisallowsTiling)
+        }
         window.title = ""
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -6054,6 +6109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             window.makeKeyAndOrderFront(nil)
             setActiveMainWindow(window)
             NSApp.activate(ignoringOtherApps: true)
+        }
+        if shouldTemporarilyDisallowFullScreenTiling {
+            DispatchQueue.main.async { [weak window] in
+                window?.collectionBehavior.remove(.fullScreenDisallowsTiling)
+            }
         }
         if let restoredFrame {
             window.setFrame(restoredFrame, display: true)
@@ -9051,6 +9111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func handleQuitShortcutWarning() -> Bool {
+        // Tagged DEV builds are ephemeral, skip quit confirmation entirely.
+        if SocketControlSettings.isTaggedDevBuild() {
+            NSApp.terminate(nil)
+            return true
+        }
+
         if !QuitWarningSettings.isEnabled() {
             NSApp.terminate(nil)
             return true
