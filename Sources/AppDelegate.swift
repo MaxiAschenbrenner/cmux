@@ -3662,7 +3662,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     nonisolated static func shouldRemoveSnapshotWhenNoWindowsRemainOnWindowUnregister(
         isTerminatingApp: Bool
     ) -> Bool {
-        !isTerminatingApp
+        // Never delete the session snapshot when the last window closes.
+        // The snapshot is used to restore workspaces on next launch, not just
+        // for crash recovery — deleting it would lose the user's session.
+        false
     }
 
     nonisolated static func shouldSkipSessionSaveDuringStartupRestore(
