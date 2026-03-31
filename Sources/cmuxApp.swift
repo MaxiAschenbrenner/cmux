@@ -3780,6 +3780,18 @@ enum QuitWarningSettings {
     }
 }
 
+enum VSCodeShortcutPassthroughSettings {
+    static let enabledKey = "vscodeShortcutPassthrough"
+    static let defaultEnabled = true
+
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: enabledKey) == nil {
+            return defaultEnabled
+        }
+        return defaults.bool(forKey: enabledKey)
+    }
+}
+
 enum CommandPaletteRenameSelectionSettings {
     static let selectAllOnFocusKey = "commandPalette.renameSelectAllOnFocus"
     static let defaultSelectAllOnFocus = true
@@ -3890,6 +3902,7 @@ struct SettingsView: View {
     @AppStorage(NotificationPaneFlashSettings.enabledKey) private var notificationPaneFlashEnabled = NotificationPaneFlashSettings.defaultEnabled
     @AppStorage(MenuBarExtraSettings.showInMenuBarKey) private var showMenuBarExtra = MenuBarExtraSettings.defaultShowInMenuBar
     @AppStorage(QuitWarningSettings.warnBeforeQuitKey) private var warnBeforeQuitShortcut = QuitWarningSettings.defaultWarnBeforeQuit
+    @AppStorage(VSCodeShortcutPassthroughSettings.enabledKey) private var vscodeShortcutPassthrough = VSCodeShortcutPassthroughSettings.defaultEnabled
     @AppStorage(CommandPaletteRenameSelectionSettings.selectAllOnFocusKey)
     private var commandPaletteRenameSelectAllOnFocus = CommandPaletteRenameSelectionSettings.defaultSelectAllOnFocus
     @AppStorage(TerminalCopyOnSelectSettings.enabledKey)
@@ -4750,6 +4763,19 @@ struct SettingsView: View {
                                 : String(localized: "settings.app.warnBeforeQuit.subtitleOff", defaultValue: "Cmd+Q quits immediately without confirmation.")
                         ) {
                             Toggle("", isOn: $warnBeforeQuitShortcut)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.vscodeShortcutPassthrough", defaultValue: "VS Code Shortcut Passthrough"),
+                            subtitle: vscodeShortcutPassthrough
+                                ? String(localized: "settings.app.vscodeShortcutPassthrough.subtitleOn", defaultValue: "Pass keyboard shortcuts through to VS Code when its panel is focused.")
+                                : String(localized: "settings.app.vscodeShortcutPassthrough.subtitleOff", defaultValue: "cmux handles all shortcuts, even when VS Code panel is focused.")
+                        ) {
+                            Toggle("", isOn: $vscodeShortcutPassthrough)
                                 .labelsHidden()
                                 .controlSize(.small)
                         }
@@ -5831,6 +5857,7 @@ struct SettingsView: View {
         notificationPaneFlashEnabled = NotificationPaneFlashSettings.defaultEnabled
         showMenuBarExtra = MenuBarExtraSettings.defaultShowInMenuBar
         warnBeforeQuitShortcut = QuitWarningSettings.defaultWarnBeforeQuit
+        vscodeShortcutPassthrough = VSCodeShortcutPassthroughSettings.defaultEnabled
         commandPaletteRenameSelectAllOnFocus = CommandPaletteRenameSelectionSettings.defaultSelectAllOnFocus
         terminalCopyOnSelectEnabled = TerminalCopyOnSelectSettings.defaultEnabled
         commandPaletteSearchAllSurfaces = CommandPaletteSwitcherSearchSettings.defaultSearchAllSurfaces

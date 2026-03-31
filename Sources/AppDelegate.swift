@@ -9178,6 +9178,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return true
     }
 
+    /// Shortcuts that cmux handles even when a VS Code panel is focused.
+    /// Everything else is passed through to VS Code's web UI.
+    func isVSCodeWhitelistedShortcut(event: NSEvent, chars: String, flags: NSEvent.ModifierFlags) -> Bool {
+        // Cmd+Q — quit
+        if matchShortcut(event: event, shortcut: StoredShortcut(key: "q", command: true, shift: false, option: false, control: false)) { return true }
+        // Cmd+W — passed through to VS Code (close editor tab)
+        // Cmd+N — new workspace
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .newTab)) { return true }
+        // Cmd+Shift+N — new window
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .newWindow)) { return true }
+        // Cmd+B — toggle sidebar
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .toggleSidebar)) { return true }
+        // Cmd+, — settings
+        if matchShortcut(event: event, shortcut: StoredShortcut(key: ",", command: true, shift: false, option: false, control: false)) { return true }
+        // Cmd+Shift+, — reload config
+        if matchShortcut(event: event, shortcut: StoredShortcut(key: ",", command: true, shift: true, option: false, control: false)) { return true }
+        // Cmd+E — toggle VS Code
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .toggleVSCode)) { return true }
+        // Cmd+Shift+E — split VS Code right
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .splitVSCodeRight)) { return true }
+        // Cmd+Shift+Option+E — split VS Code down
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .splitVSCodeDown)) { return true }
+        // Cmd+1-9 — workspace switching
+        if numberedShortcutDigit(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .selectWorkspaceByNumber)) != nil { return true }
+        // Workspace navigation: next/prev
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .nextSidebarTab)) { return true }
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .prevSidebarTab)) { return true }
+        // Surface navigation: next/prev
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .nextSurface)) { return true }
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .prevSurface)) { return true }
+        // Split zoom toggle
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .toggleSplitZoom)) { return true }
+        // Rename workspace
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .renameWorkspace)) { return true }
+        // Close workspace
+        if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .closeWorkspace)) { return true }
+        return false
+    }
+
     private func handleCustomShortcut(event: NSEvent) -> Bool {
         // `charactersIgnoringModifiers` can be nil for some synthetic NSEvents and certain special keys.
         // Treat nil as "" and rely on keyCode/layout-aware fallback logic where needed.
@@ -9408,6 +9447,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #endif
             browserAddressBarFocusedPanelId = nil
             stopBrowserOmnibarSelectionRepeat()
+        }
+
+        // When a VS Code panel is focused and passthrough is enabled, pass most
+        // shortcuts through to VS Code. Only whitelisted cmux shortcuts are kept.
+        // This must run before command palette (Cmd+P / Cmd+Shift+P) matching.
+        if VSCodeShortcutPassthroughSettings.isEnabled(),
+           tabManager?.selectedWorkspace?.isFocusedPanelVSCode == true,
+           !isVSCodeWhitelistedShortcut(event: event, chars: chars, flags: flags) {
+            return false
         }
 
         // Keep Cmd+P/Cmd+N inside the focused browser omnibar for Chrome-like
@@ -12775,6 +12823,19 @@ private extension NSWindow {
             dlog("  → browser Return/Enter routed to firstResponder.keyDown")
 #endif
             self.firstResponder?.keyDown(with: event)
+            return true
+        }
+
+        // When a VS Code panel is focused and passthrough is enabled, route the
+        // event directly to the WebView so AppKit menus don't intercept it.
+        if let webView = firstResponderWebView,
+           VSCodeShortcutPassthroughSettings.isEnabled(),
+           AppDelegate.shared?.tabManager?.selectedWorkspace?.isFocusedPanelVSCode == true,
+           !(AppDelegate.shared?.isVSCodeWhitelistedShortcut(event: event, chars: KeyboardLayout.normalizedCharacters(for: event), flags: event.modifierFlags.intersection(.deviceIndependentFlagsMask)) ?? false) {
+            webView.keyDown(with: event)
+#if DEBUG
+            dlog("  → VS Code passthrough via keyDown")
+#endif
             return true
         }
 
