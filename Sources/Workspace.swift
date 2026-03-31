@@ -7997,6 +7997,12 @@ final class Workspace: Identifiable, ObservableObject {
         return createVSCodeBrowserPanel()
     }
 
+    /// Whether the currently focused panel is a VS Code browser panel.
+    var isFocusedPanelVSCode: Bool {
+        guard let panelId = focusedPanelId else { return false }
+        return vscodeBrowserPanelIds.contains(panelId)
+    }
+
     private func findVisibleVSCodeBrowserPanelId() -> UUID? {
         for (id, _) in panels {
             if vscodeBrowserPanelIds.contains(id) { return id }
