@@ -3872,10 +3872,17 @@ class TabManager: ObservableObject {
     }
 
     /// Create a VS Code split from the focused panel in the selected workspace.
+    /// Reuses the hidden VS Code panel if one exists for the current directory.
     @discardableResult
     func splitVSCode(orientation: SplitOrientation) -> Bool {
         guard let tab = selectedWorkspace,
               let focusedPanelId = tab.focusedPanelId else { return false }
+
+        // Reuse hidden panel if available for the current directory.
+        if tab.restoreHiddenVSCodePanelAsSplit(from: focusedPanelId, orientation: orientation) {
+            return true
+        }
+
         guard TerminalDirectoryOpenTarget.vscodeInline.isAvailable(),
               let vscodeAppURL = TerminalDirectoryOpenTarget.vscodeInline.applicationURL() else {
             return false

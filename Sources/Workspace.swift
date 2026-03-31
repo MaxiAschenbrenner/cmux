@@ -8071,6 +8071,54 @@ final class Workspace: Identifiable, ObservableObject {
         return true
     }
 
+    /// Re-insert the hidden VS Code panel as a split (non-zoomed) next to the given panel.
+    func restoreHiddenVSCodePanelAsSplit(
+        from sourcePanelId: UUID,
+        orientation: SplitOrientation
+    ) -> Bool {
+        guard let browserPanel = hiddenVSCodePanel,
+              hiddenVSCodePanelDirectory == currentDirectory else { return false }
+        hiddenVSCodePanel = nil
+        hiddenVSCodePanelDirectory = nil
+
+        guard let sourceTabId = surfaceIdFromPanelId(sourcePanelId) else { return false }
+        let sourcePaneId = bonsplitController.allPaneIds.first { paneId in
+            bonsplitController.tabs(inPane: paneId).contains(where: { $0.id == sourceTabId })
+        }
+        guard let paneId = sourcePaneId else { return false }
+
+        panels[browserPanel.id] = browserPanel
+
+        let newTab = Bonsplit.Tab(
+            title: browserPanel.displayTitle,
+            icon: browserPanel.displayIcon,
+            kind: SurfaceKind.browser,
+            isDirty: browserPanel.isDirty,
+            isLoading: browserPanel.isLoading,
+            isPinned: false
+        )
+        surfaceIdToPanelId[newTab.id] = browserPanel.id
+
+        isProgrammaticSplit = true
+        defer { isProgrammaticSplit = false }
+        guard bonsplitController.splitPane(paneId, orientation: orientation, withTab: newTab, insertFirst: false) != nil else {
+            surfaceIdToPanelId.removeValue(forKey: newTab.id)
+            panels.removeValue(forKey: browserPanel.id)
+            return false
+        }
+
+        let previousHostedView = focusedTerminalPanel?.hostedView
+        previousHostedView?.suppressReparentFocus()
+        focusPanel(browserPanel.id)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            previousHostedView?.clearSuppressReparentFocus()
+        }
+
+        installBrowserPanelSubscription(browserPanel)
+        vscodeBrowserPanelIds.insert(browserPanel.id)
+        return true
+    }
+
     /// Destroy the hidden VS Code panel and release its WKWebView.
     private func discardHiddenVSCodePanel() {
         guard let panel = hiddenVSCodePanel else { return }
