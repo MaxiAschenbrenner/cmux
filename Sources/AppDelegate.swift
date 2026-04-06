@@ -950,6 +950,9 @@ final class VSCodeServeWebController {
             return nil
         }
 
+        // Kill any orphaned server from a previous app session still holding the port.
+        Self.killExistingServerOnPort()
+
         let process = Process()
         process.executableURL = launchConfiguration.executableURL
         process.arguments = launchConfiguration.argumentsPrefix + [
@@ -1070,6 +1073,35 @@ final class VSCodeServeWebController {
             guard !data.isEmpty else { return }
             collector.append(data)
         }
+    }
+
+    /// Kills any process listening on the hardcoded serve-web port.
+    /// This handles orphaned servers from a previous app session that are still
+    /// holding the port (e.g. after a crash or force-quit).
+    private static func killExistingServerOnPort() {
+        let lsof = Process()
+        lsof.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        lsof.arguments = ["-ti", "tcp:\(serveWebPort)"]
+        let pipe = Pipe()
+        lsof.standardOutput = pipe
+        lsof.standardError = FileHandle.nullDevice
+        do {
+            try lsof.run()
+        } catch {
+            return
+        }
+        lsof.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !output.isEmpty else { return }
+
+        for pidString in output.components(separatedBy: .newlines) {
+            if let pid = Int32(pidString.trimmingCharacters(in: .whitespaces)), pid > 0 {
+                kill(pid, SIGTERM)
+            }
+        }
+        // Brief wait for the port to be released.
+        Thread.sleep(forTimeInterval: 0.3)
     }
 
     private static func randomConnectionToken() -> String {
