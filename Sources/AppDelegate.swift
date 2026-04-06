@@ -749,6 +749,9 @@ enum VSCodeCLILaunchConfigurationBuilder {
 final class VSCodeServeWebController {
     static let shared = VSCodeServeWebController()
     private static let serveWebStartupTimeoutSeconds: TimeInterval = 60
+    /// Fixed port keeps the origin (scheme://host:port) stable across restarts so that
+    /// WKWebView client-side storage (localStorage, IndexedDB, cookies) persists.
+    private static let serveWebPort = "9843"
 
     private let queue = DispatchQueue(label: "cmux.vscode.serveWeb")
     private let launchQueue = DispatchQueue(label: "cmux.vscode.serveWeb.launch")
@@ -953,7 +956,7 @@ final class VSCodeServeWebController {
             "serve-web",
             "--accept-server-license-terms",
             "--host", "127.0.0.1",
-            "--port", "0",
+            "--port", Self.serveWebPort,
             "--connection-token-file", connectionTokenFileURL.path,
         ]
         process.environment = launchConfiguration.environment
@@ -1073,14 +1076,38 @@ final class VSCodeServeWebController {
         UUID().uuidString.replacingOccurrences(of: "-", with: "")
     }
 
+    /// Returns the persistent connection-token file, creating it on first use.
+    /// The file lives in Application Support so the same token survives app
+    /// restarts, keeping the VS Code Web session (and its client-side storage)
+    /// intact.
+    private static func persistentConnectionTokenFileURL() -> URL? {
+        guard let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else { return nil }
+
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.cmux"
+        let directory = appSupport.appendingPathComponent(bundleID, isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("vscode-connection-token", isDirectory: false)
+    }
+
     private static func makeConnectionTokenFile() -> URL? {
+        guard let tokenFileURL = persistentConnectionTokenFileURL() else {
+            return nil
+        }
+
+        // Reuse the existing token file if it already exists and is non-empty.
+        if FileManager.default.fileExists(atPath: tokenFileURL.path),
+           let existing = try? Data(contentsOf: tokenFileURL),
+           !existing.isEmpty {
+            return tokenFileURL
+        }
+
         let token = randomConnectionToken()
-        let tokenFileName = "cmux-vscode-token-\(UUID().uuidString)"
-        let tokenFileURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent(tokenFileName, isDirectory: false)
         guard let tokenData = token.data(using: .utf8) else { return nil }
 
-        let fileDescriptor = open(tokenFileURL.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
+        let fileDescriptor = open(tokenFileURL.path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR)
         guard fileDescriptor >= 0 else { return nil }
         defer { _ = close(fileDescriptor) }
 
@@ -1089,14 +1116,16 @@ final class VSCodeServeWebController {
             return write(fileDescriptor, baseAddress, rawBuffer.count) == rawBuffer.count
         }
         guard wroteAllBytes else {
-            removeConnectionTokenFile(at: tokenFileURL)
             return nil
         }
 
         return tokenFileURL
     }
 
+    /// Only removes ephemeral (tmp-based) token files. The persistent token in
+    /// Application Support is kept so future launches reuse the same token.
     private static func removeConnectionTokenFile(at url: URL) {
+        guard url.path.hasPrefix(NSTemporaryDirectory()) else { return }
         try? FileManager.default.removeItem(at: url)
     }
 }
