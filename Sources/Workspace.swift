@@ -9352,10 +9352,60 @@ final class Workspace: Identifiable, ObservableObject {
     private func refreshLayoutFollowUpTimeout() {
         layoutFollowUpTimeoutWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
+            self?.forceRevealVisiblePortals()
             self?.clearLayoutFollowUp()
         }
         layoutFollowUpTimeoutWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+    }
+
+    /// Last-resort pass when the layout follow-up times out. Force-unhides every
+    /// portal that should be visible according to the current rendered layout so
+    /// panels never stay permanently blank after a workspace switch or toggle.
+    private func forceRevealVisiblePortals() {
+        let visiblePanelIds = renderedVisiblePanelIdsForCurrentLayout()
+
+        for panel in panels.values {
+            guard visiblePanelIds.contains(panel.id) else { continue }
+
+            if let terminalPanel = panel as? TerminalPanel {
+                let hostedView = terminalPanel.hostedView
+                if hostedView.isHidden {
+                    hostedView.setVisibleInUI(true)
+                    TerminalWindowPortalRegistry.updateEntryVisibility(
+                        for: hostedView,
+                        visibleInUI: true
+                    )
+#if DEBUG
+                    dlog(
+                        "portal.forceReveal.terminal panel=\(panel.id.uuidString.prefix(5)) " +
+                        "reason=layoutFollowUpTimeout"
+                    )
+#endif
+                }
+            } else if let browserPanel = panel as? BrowserPanel {
+                let snapshot = BrowserWindowPortalRegistry.debugSnapshot(for: browserPanel.webView)
+                if snapshot?.containerHidden == true {
+                    BrowserWindowPortalRegistry.updateEntryVisibility(
+                        for: browserPanel.webView,
+                        visibleInUI: true,
+                        zPriority: 2
+                    )
+                    if browserPortalAnchorReady(for: browserPanel) {
+                        BrowserWindowPortalRegistry.refresh(
+                            webView: browserPanel.webView,
+                            reason: "forceReveal.layoutFollowUpTimeout"
+                        )
+                    }
+#if DEBUG
+                    dlog(
+                        "portal.forceReveal.browser panel=\(panel.id.uuidString.prefix(5)) " +
+                        "reason=layoutFollowUpTimeout anchorReady=\(browserPortalAnchorReady(for: browserPanel) ? 1 : 0)"
+                    )
+#endif
+                }
+            }
+        }
     }
 
     private func clearLayoutFollowUp() {
@@ -9631,7 +9681,8 @@ final class Workspace: Identifiable, ObservableObject {
         for panel in panels.values {
             guard let terminalPanel = panel as? TerminalPanel else { continue }
             let shouldBeVisible = visiblePanelIds.contains(terminalPanel.id)
-            if terminalPanel.hostedView.debugPortalVisibleInUI != shouldBeVisible {
+            let flagDesynced = shouldBeVisible && terminalPanel.hostedView.isHidden
+            if terminalPanel.hostedView.debugPortalVisibleInUI != shouldBeVisible || flagDesynced {
                 terminalPanel.hostedView.setVisibleInUI(shouldBeVisible)
                 didChange = true
             }
@@ -9699,7 +9750,13 @@ final class Workspace: Identifiable, ObservableObject {
                         )
                         didChange = true
                     }
-                } else if anchorReady && snapshot?.containerHidden == true {
+                }
+                // Re-check container hidden state after sync — the container can
+                // stay hidden even when the entry's visibleInUI is already true
+                // (desync from a prior synchronizeWebView hiding it for transient
+                // geometry). Always refresh to unhide in that case.
+                let currentSnapshot = BrowserWindowPortalRegistry.debugSnapshot(for: browserPanel.webView)
+                if anchorReady && currentSnapshot?.containerHidden == true && currentSnapshot?.visibleInUI == true {
                     BrowserWindowPortalRegistry.refresh(
                         webView: browserPanel.webView,
                         reason: reason

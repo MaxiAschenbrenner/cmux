@@ -2655,12 +2655,18 @@ final class WindowBrowserPortal: NSObject {
     /// Update the visibleInUI/zPriority state on an existing entry without rebinding.
     /// Used when a bind is deferred (host not yet in window) so stale portal syncs
     /// do not keep an old anchor visible.
+    /// When transitioning from hidden to visible, triggers synchronizeWebView
+    /// so the portal container is unhidden atomically with the flag update.
     func updateEntryVisibility(forWebViewId webViewId: ObjectIdentifier, visibleInUI: Bool, zPriority: Int) {
         guard var entry = entriesByWebViewId[webViewId] else { return }
+        let wasVisible = entry.visibleInUI
         guard entry.visibleInUI != visibleInUI || entry.zPriority != zPriority else { return }
         entry.visibleInUI = visibleInUI
         entry.zPriority = zPriority
         entriesByWebViewId[webViewId] = entry
+        if visibleInUI && !wasVisible {
+            synchronizeWebView(withId: webViewId, source: "updateEntryVisibility")
+        }
     }
 
     func isWebViewBoundToAnchor(withId webViewId: ObjectIdentifier, anchorView: NSView) -> Bool {
