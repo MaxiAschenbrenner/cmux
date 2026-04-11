@@ -4673,15 +4673,91 @@ struct SettingsView: View {
         }
     }
 
-    var body: some View {
-        let _ = keyboardShortcutSettingsObserver.revision
-        let _ = Self.validateBypassedSettingsConfigurationReviews()
-        ScrollViewReader { proxy in
-            ZStack(alignment: .top) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+    private var vscodeShortcutPassthroughSubtitle: String {
+        if vscodeShortcutPassthrough {
+            return String(localized: "settings.app.vscodeShortcutPassthrough.subtitleOn", defaultValue: "Pass keyboard shortcuts through to VS Code when its panel is focused.")
+        } else {
+            return String(localized: "settings.app.vscodeShortcutPassthrough.subtitleOff", defaultValue: "cmux handles all shortcuts, even when VS Code panel is focused.")
+        }
+    }
+
+    private var notificationCustomSoundStatusColor: Color {
+        notificationCustomSoundStatusIsError ? Color.red : Color.secondary
+    }
+
+    @ViewBuilder
+    private var notificationSoundRowContent: some View {
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 6) {
+                Picker("", selection: $notificationSound) {
+                    ForEach(NotificationSoundSettings.systemSounds, id: \.value) { sound in
+                        Text(sound.label).tag(sound.value)
+                    }
+                }
+                .labelsHidden()
+                Button {
+                    previewNotificationSound()
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 9))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!canPreviewNotificationSound)
+            }
+
+            if notificationSound == NotificationSoundSettings.customFileValue {
+                notificationSoundCustomFileSection
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private var notificationSoundCustomFileSection: some View {
+        HStack(spacing: 6) {
+            Text(notificationSoundCustomFileDisplayName)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 170, alignment: .trailing)
+            Button(
+                String(
+                    localized: "settings.notifications.sound.custom.choose.button",
+                    defaultValue: "Choose..."
+                )
+            ) {
+                chooseNotificationSoundFile()
+            }
+            .controlSize(.small)
+            Button(
+                String(
+                    localized: "settings.notifications.sound.custom.clear.button",
+                    defaultValue: "Clear"
+                )
+            ) {
+                notificationSoundCustomFilePath = NotificationSoundSettings.defaultCustomFilePath
+                refreshNotificationCustomSoundStatus()
+            }
+            .controlSize(.small)
+            .disabled(!hasCustomNotificationSoundFilePath)
+        }
+        if let notificationCustomSoundStatusMessage {
+            Text(notificationCustomSoundStatusMessage)
+                .font(.system(size: 11))
+                .foregroundStyle(notificationCustomSoundStatusColor)
+                .lineLimit(2)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 260, alignment: .trailing)
+        }
+    }
+
+    @ViewBuilder
+    private var appSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.app", defaultValue: "App"))
                     SettingsCard {
+                      Group {
                         SettingsCardRow(
                             configurationReview: .json("app.language"),
                             String(localized: "settings.app.language", defaultValue: "Language"),
@@ -4846,6 +4922,8 @@ struct SettingsView: View {
 
                         SettingsCardDivider()
 
+                      }
+                      Group {
                         SettingsCardRow(
                             configurationReview: .json("notifications.unreadPaneRing"),
                             String(localized: "settings.notifications.paneRing.title", defaultValue: "Unread Pane Ring"),
@@ -4901,71 +4979,15 @@ struct SettingsView: View {
 
                         SettingsCardDivider()
 
+                      }
+                      Group {
                         SettingsCardRow(
                             configurationReview: .json("notifications.sound", "notifications.customSoundFilePath"),
                             String(localized: "settings.notifications.sound.title", defaultValue: "Notification Sound"),
                             subtitle: String(localized: "settings.notifications.sound.subtitle", defaultValue: "Sound played when a notification arrives."),
                             controlWidth: notificationSoundControlWidth
                         ) {
-                            VStack(alignment: .trailing, spacing: 6) {
-                                HStack(spacing: 6) {
-                                    Picker("", selection: $notificationSound) {
-                                        ForEach(NotificationSoundSettings.systemSounds, id: \.value) { sound in
-                                            Text(sound.label).tag(sound.value)
-                                        }
-                                    }
-                                    .labelsHidden()
-                                    Button {
-                                        previewNotificationSound()
-                                    } label: {
-                                        Image(systemName: "play.fill")
-                                            .font(.system(size: 9))
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .disabled(!canPreviewNotificationSound)
-                                }
-
-                                if notificationSound == NotificationSoundSettings.customFileValue {
-                                    HStack(spacing: 6) {
-                                        Text(notificationSoundCustomFileDisplayName)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
-                                            .frame(width: 170, alignment: .trailing)
-                                        Button(
-                                            String(
-                                                localized: "settings.notifications.sound.custom.choose.button",
-                                                defaultValue: "Choose..."
-                                            )
-                                        ) {
-                                            chooseNotificationSoundFile()
-                                        }
-                                        .controlSize(.small)
-                                        Button(
-                                            String(
-                                                localized: "settings.notifications.sound.custom.clear.button",
-                                                defaultValue: "Clear"
-                                            )
-                                        ) {
-                                            notificationSoundCustomFilePath = NotificationSoundSettings.defaultCustomFilePath
-                                            refreshNotificationCustomSoundStatus()
-                                        }
-                                        .controlSize(.small)
-                                        .disabled(!hasCustomNotificationSoundFilePath)
-                                    }
-                                    if let notificationCustomSoundStatusMessage {
-                                        Text(notificationCustomSoundStatusMessage)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(notificationCustomSoundStatusIsError ? Color.red : Color.secondary)
-                                            .lineLimit(2)
-                                            .multilineTextAlignment(.trailing)
-                                            .frame(width: 260, alignment: .trailing)
-                                    }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            notificationSoundRowContent
                         }
 
                         SettingsCardDivider()
@@ -4982,6 +5004,8 @@ struct SettingsView: View {
 
                         SettingsCardDivider()
 
+                      }
+                      Group {
                         SettingsCardRow(
                             configurationReview: .json("app.sendAnonymousTelemetry"),
                             String(localized: "settings.app.telemetry", defaultValue: "Send anonymous telemetry"),
@@ -5011,10 +5035,9 @@ struct SettingsView: View {
                         SettingsCardDivider()
 
                         SettingsCardRow(
+                            configurationReview: .settingsOnly,
                             String(localized: "settings.app.vscodeShortcutPassthrough", defaultValue: "VS Code Shortcut Passthrough"),
-                            subtitle: vscodeShortcutPassthrough
-                                ? String(localized: "settings.app.vscodeShortcutPassthrough.subtitleOn", defaultValue: "Pass keyboard shortcuts through to VS Code when its panel is focused.")
-                                : String(localized: "settings.app.vscodeShortcutPassthrough.subtitleOff", defaultValue: "cmux handles all shortcuts, even when VS Code panel is focused.")
+                            subtitle: vscodeShortcutPassthroughSubtitle
                         ) {
                             Toggle("", isOn: $vscodeShortcutPassthrough)
                                 .labelsHidden()
@@ -5055,6 +5078,8 @@ struct SettingsView: View {
 
                         SettingsCardDivider()
 
+                      }
+                      Group {
                         SettingsCardRow(
                             configurationReview: .json("sidebar.hideAllDetails"),
                             String(localized: "settings.app.hideAllSidebarDetails", defaultValue: "Hide All Sidebar Details"),
@@ -5215,8 +5240,12 @@ struct SettingsView: View {
                                 .controlSize(.small)
                         }
                         .disabled(sidebarHideAllDetails)
+                      }
                     }
+    }
 
+    @ViewBuilder
+    private var workspaceColorsSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.workspaceColors", defaultValue: "Workspace Colors"))
                     SettingsCard {
                         SettingsPickerRow(
@@ -5366,7 +5395,10 @@ struct SettingsView: View {
                             .controlSize(.small)
                         }
                     }
+    }
 
+    @ViewBuilder
+    private var sidebarAppearanceSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.sidebarAppearance", defaultValue: "Sidebar Appearance"))
                     SettingsCard {
                         SettingsCardRow(
@@ -5460,7 +5492,10 @@ struct SettingsView: View {
                             .controlSize(.small)
                         }
                     }
+    }
 
+    @ViewBuilder
+    private var automationSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.automation", defaultValue: "Automation"))
                     SettingsCard {
                         SettingsPickerRow(
@@ -5617,7 +5652,10 @@ struct SettingsView: View {
 
                         SettingsCardNote(String(localized: "settings.automation.port.note", defaultValue: "Each workspace gets CMUX_PORT and CMUX_PORT_END env vars with a dedicated port range. New terminals inherit these values."))
                     }
+    }
 
+    @ViewBuilder
+    private var customCommandsSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.customCommands", defaultValue: "Custom Commands"))
                     SettingsCard {
                         VStack(alignment: .leading, spacing: 6) {
@@ -5650,7 +5688,10 @@ struct SettingsView: View {
                         SettingsCardDivider()
                         SettingsCardNote(String(localized: "settings.customCommands.trustedDirectories.note", defaultValue: "Place a cmux.json in your project root to define custom commands. Trust a directory from the confirmation dialog, or add paths here. For git repos, trusting the root covers all subdirectories."))
                     }
+    }
 
+    @ViewBuilder
+    private var browserSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.browser", defaultValue: "Browser"))
                         .id(SettingsNavigationTarget.browser)
                         .accessibilityIdentifier("SettingsBrowserSection")
@@ -5929,7 +5970,10 @@ struct SettingsView: View {
                     }
 
                     GlobalHotkeySection()
+    }
 
+    @ViewBuilder
+    private var keyboardShortcutsSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.keyboardShortcuts", defaultValue: "Keyboard Shortcuts"))
                         .id(SettingsNavigationTarget.keyboardShortcuts)
                         .accessibilityIdentifier("SettingsKeyboardShortcutsSection")
@@ -5988,7 +6032,10 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                         .padding(.leading, 2)
                         .accessibilityIdentifier("ShortcutRecordingHint")
+    }
 
+    @ViewBuilder
+    private var resetSettingsSection: some View {
                     SettingsSectionHeader(title: String(localized: "settings.section.reset", defaultValue: "Reset"))
                     SettingsCard {
                         HStack {
@@ -6003,6 +6050,22 @@ struct SettingsView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
                     }
+    }
+
+    @ViewBuilder
+    private var settingsScrollContent: some View {
+        ScrollViewReader { proxy in
+            ZStack(alignment: .top) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    appSettingsSection
+                    workspaceColorsSettingsSection
+                    sidebarAppearanceSettingsSection
+                    automationSettingsSection
+                    customCommandsSettingsSection
+                    browserSettingsSection
+                    keyboardShortcutsSettingsSection
+                    resetSettingsSection
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
@@ -6125,6 +6188,13 @@ struct SettingsView: View {
                 }
             }
         }
+        }
+    }
+
+    var body: some View {
+        let _ = keyboardShortcutSettingsObserver.revision
+        let _ = Self.validateBypassedSettingsConfigurationReviews()
+        settingsScrollContent
         .confirmationDialog(
             String(localized: "settings.browser.history.clearDialog.title", defaultValue: "Clear browser history?"),
             isPresented: $showClearBrowserHistoryConfirmation,
@@ -6172,7 +6242,6 @@ struct SettingsView: View {
             Button(String(localized: "common.ok", defaultValue: "OK"), role: .cancel) {}
         } message: {
             Text(notificationCustomSoundErrorAlertMessage)
-        }
         }
     }
 
