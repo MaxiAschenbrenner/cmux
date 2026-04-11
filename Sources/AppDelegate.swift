@@ -12511,6 +12511,7 @@ private var cmuxFirstResponderGuardCurrentEventContext: NSEvent?
 private var cmuxFirstResponderGuardHitViewContext: NSView?
 private var cmuxFirstResponderGuardContextWindowNumber: Int?
 private var cmuxBrowserReturnForwardingDepth = 0
+private var cmuxVSCodePassthroughForwardingDepth = 0
 private var cmuxWindowFirstResponderBypassDepth = 0
 private var cmuxFieldEditorOwningWebViewAssociationKey: UInt8 = 0
 
@@ -12893,6 +12894,18 @@ private extension NSWindow {
            VSCodeShortcutPassthroughSettings.isEnabled(),
            AppDelegate.shared?.tabManager?.selectedWorkspace?.isFocusedPanelVSCode == true,
            !(AppDelegate.shared?.isVSCodeWhitelistedShortcut(event: event, chars: KeyboardLayout.normalizedCharacters(for: event), flags: event.modifierFlags.intersection(.deviceIndependentFlagsMask)) ?? false) {
+            // Forwarding keyDown can re-enter performKeyEquivalent in WebKit/AppKit
+            // internals (e.g. WebKit walks the responder chain to look up Cmd+V/C/X
+            // against the Edit menu). On re-entry, fall back to normal dispatch to
+            // avoid an infinite loop / stack overflow that crashes the app.
+            if cmuxVSCodePassthroughForwardingDepth > 0 {
+#if DEBUG
+                dlog("  → VS Code passthrough reentry; using normal dispatch")
+#endif
+                return false
+            }
+            cmuxVSCodePassthroughForwardingDepth += 1
+            defer { cmuxVSCodePassthroughForwardingDepth = max(0, cmuxVSCodePassthroughForwardingDepth - 1) }
             webView.keyDown(with: event)
 #if DEBUG
             dlog("  → VS Code passthrough via keyDown")
