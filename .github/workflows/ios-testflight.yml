@@ -31,12 +31,12 @@ on:
         required: false
         default: false
         type: boolean
-  schedule:
+  #schedule:
     # Nightly at 09:10 UTC. The decide job skips the run only when the current
     # main HEAD was already uploaded by a prior successful run (SHA compare, not
     # a wall-clock window), so a failed or missed nightly retries the
     # not-yet-uploaded commit instead of permanently stranding it.
-    - cron: "10 9 * * *"
+   # - cron: "10 9 * * *"
 
 concurrency:
   group: ios-testflight-${{ github.ref_name }}
